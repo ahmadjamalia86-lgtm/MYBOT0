@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import yt_dlp
 
-# -------- KEEP ALIVE --------
+# ------------------- KEEP ALIVE -------------------
 app_flask = Flask('')
 
 @app_flask.route('/')
@@ -16,14 +16,18 @@ def run():
     app_flask.run(host='0.0.0.0', port=10000)
 
 threading.Thread(target=run).start()
-# ---------------------------
+# -------------------------------------------------
 
-TOKEN = os.getenv("BOT_TOKEN")
+# توكن البوت الجديد
+TOKEN = "7753317724:AAH7J21jgZKEln8uFrnwUAPOfEG2MMLIq-U"
+
 user_links = {}
 
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أرسل رابط الفيديو")
 
+# استقبال الرابط
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = update.message.text
     user_links[update.message.chat_id] = link
@@ -40,6 +44,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+# تحميل الفيديو وإرساله كملف Document
 async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -59,15 +64,18 @@ async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
+    # إرسال كملف Document (لحل مشكلة الحجم)
     for file in os.listdir():
         if file.startswith("video."):
-            await query.message.reply_video(video=open(file, 'rb'))
+            await query.message.reply_document(document=open(file, 'rb'))
             os.remove(file)
 
+# إنشاء التطبيق
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 app.add_handler(CallbackQueryHandler(download_video))
 
+# تشغيل البوت
 app.run_polling()
