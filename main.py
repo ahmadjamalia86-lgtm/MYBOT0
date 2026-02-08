@@ -1,118 +1,92 @@
 import os
 import asyncio
+import threading
+import uuid
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import yt_dlp
-import uuid
 
-# قراءة التوكين من إعدادات Render
-TOKEN = os.getenv('BOT_TOKEN')
+# --- خادم صغير لمنع النوم (Flask) ---
+app_flask = Flask('')
+@app_flask.route('/')
+def home(): return "البوت يعمل بنجاح!"
 
-# دالة التحميل (تعمل في الخلفية)
-def run_yt_dlp(url, quality_setting):
-    # تحديد خيارات الجودة
-    if quality_setting == 'audio':
-        # خيارات الصوت فقط (تحويل لـ MP3)
-        ydl_opts = {
+def run_flask():
+    app_flask.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    t = threading.Thread(target=run_flask)
+    t.start()
+
+# --- إعدادات التحميل ---
+def download_video(url, resolution, file_id):
+    if resolution == 'audio':
+        opts = {
             'format': 'bestaudio/best',
-            'outtmpl': f'{uuid.uuid4()}.%(ext)s',  # اسم عشوائي لمنع تداخل الملفات
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'quiet': True,
-        }
-    elif quality_setting == 'low':
-        # خيارات جودة منخفضة (لتوفير الباقة)
-        ydl_opts = {
-            'format': 'worst[ext=mp4]/worst',
-            'outtmpl': f'{uuid.uuid4()}.%(ext)s',
-            'quiet': True,
+            'outtmpl': f'{file_id}.mp3',
+            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
+            'quiet': True
         }
     else:
-        # خيارات جودة عالية (الوضع الافتراضي)
-        ydl_opts = {
-            'format': 'best[ext=mp4]/best',
-            'outtmpl': f'{uuid.uuid4()}.%(ext)s',
+        # محاولة جلب فيديو مدمج مسبقاً لتقليل الضغط على الرام
+        opts = {
+            'format': f'bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best',
+            'outtmpl': f'{file_id}.mp4',
             'quiet': True,
+            'max_filesize': 48 * 1024 * 1024  # حد 48 ميجا ليقبله تلجرام
         }
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            # إرجاع اسم الملف الذي تم تحميله
-            if quality_setting == 'audio':
-                return ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
-            return ydl.prepare_filename(info)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+            ext = 'mp3' if resolution == 'audio' else 'mp4'
+            return f"{file_id}.{ext}"
     except Exception as e:
-        print(f"Download Error: {e}")
+        print(f"Error: {e}")
         return None
 
-# 1. استقبال الرابط وعرض الأزرار
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     if "http" in url:
-        # حفظ الرابط مؤقتاً لنعرفه عند ضغط الزر
-        context.user_data['current_url'] = url
-        
-        # تصميم الأزرار
+        context.user_data['url'] = url
         keyboard = [
-            [InlineKeyboardButton("🎬 جودة عالية (HD)", callback_data='high')],
-            [InlineKeyboardButton("📉 جودة متوسطة", callback_data='low')],
-            [InlineKeyboardButton("🎵 صوت فقط (MP3)", callback_data='audio')]
+            [InlineKeyboardButton("📺 1080p", callback_data='1080'), InlineKeyboardButton("📺 720p", callback_data='720')],
+            [InlineKeyboardButton("📺 480p", callback_data='480'), InlineKeyboardButton("📺 360p", callback_data='360')],
+            [InlineKeyboardButton("📺 240p", callback_data='240'), InlineKeyboardButton("🎵 MP3", callback_data='audio')]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text("🎥 اختر الجودة المطلوبة:", reply_markup=reply_markup)
-    else:
-        await update.message.reply_text("أرسل رابط فيديو صالح من فضلك.")
+        await update.message.reply_text("🎬 اختر الدقة المطلوبة:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# 2. تنفيذ الأمر عند ضغط الزر
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # تأكيد الضغط
+    await query.answer()
+    res = query.data
+    url = context.user_data.get('url')
     
-    choice = query.data
-    url = context.user_data.get('current_url')
+    status_msg = await query.edit_message_text(f"⏳ جاري التحميل بدقة {res}... يرجى الانتظار.")
+    file_id = str(uuid.uuid4())
     
-    if not url:
-        await query.edit_message_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مجدداً.")
-        return
-
-    await query.edit_message_text(f"⏳ جاري التحميل... ({choice})")
-    
-    # تشغيل التحميل
-    file_path = await asyncio.to_thread(run_yt_dlp, url, choice)
+    file_path = await asyncio.to_thread(download_video, url, res, file_id)
     
     if file_path and os.path.exists(file_path):
-        await query.message.reply_text("🚀 جاري الرفع...")
-        try:
-            with open(file_path, 'rb') as f:
-                if choice == 'audio':
-                    await query.message.reply_audio(audio=f, title="Audio Clip")
-                else:
-                    await query.message.reply_video(video=f)
-        except Exception as e:
-            await query.message.reply_text("حدث خطأ أثناء الإرسال، حجم الملف قد يكون كبيراً جداً.")
-        finally:
-            # حذف الملف من السيرفر لتوفير المساحة
-            os.remove(file_path)
+        await query.message.reply_text("✅ تم التحميل، جاري الرفع إلى تلجرام...")
+        with open(file_path, 'rb') as f:
+            if res == 'audio': await query.message.reply_audio(audio=f)
+            else: await query.message.reply_video(video=f)
+        os.remove(file_path)
+        await status_msg.delete()
     else:
-        await query.message.reply_text("❌ فشل التحميل. تأكد أن الرابط عام وليس خاصاً.")
+        await query.edit_message_text("❌ فشل التحميل. الأسباب المحتملة:\n1. حجم الملف أكبر من 50MB.\n2. السيرفر المجاني استهلك الذاكرة.\n3. الدقة غير متوفرة.")
 
 def main():
-    if not TOKEN:
-        print("Error: BOT_TOKEN is missing!")
-        return
-        
-    app = Application.builder().token(TOKEN).build()
+    token = os.getenv('BOT_TOKEN')
+    if not token: return
     
-    # ربط الوظائف
+    keep_alive() # تشغيل ميزة منع النوم
+    
+    app = Application.builder().token(token).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(button_click))
-    
-    print("Bot is running...")
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.run_polling()
 
 if __name__ == '__main__':
