@@ -18,7 +18,6 @@ def run():
 threading.Thread(target=run).start()
 # -------------------------------------------------
 
-# توكن البوت الجديد
 TOKEN = "7753317724:AAH7J21jgZKEln8uFrnwUAPOfEG2MMLIq-U"
 
 user_links = {}
@@ -44,31 +43,48 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# تحميل الفيديو وإرساله كملف Document
+# تحميل الفيديو وإرساله كـ Document
 async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     chat_id = query.message.chat_id
     resolution = query.data
-    url = user_links.get(chat_id)
+    url = user_links.pop(chat_id, None)
+
+    if not url:
+        await query.message.reply_text("حدث خطأ، الرابط غير موجود.")
+        return
 
     ydl_opts = {
         'format': f'bestvideo[height<={resolution}]+bestaudio/best',
         'merge_output_format': 'mp4',
-        'outtmpl': 'video.%(ext)s'
+        'outtmpl': 'video.%(ext)s',
+        'noplaylist': True,
+        'ignoreerrors': True,
+        'quiet': True
     }
 
     await query.message.reply_text("جاري التحميل...")
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        await query.message.reply_text(f"حدث خطأ أثناء التحميل: {e}")
+        return
 
-    # إرسال كملف Document (لحل مشكلة الحجم)
+    # إرسال الفيديو كملف Document
+    sent = False
     for file in os.listdir():
         if file.startswith("video."):
-            await query.message.reply_document(document=open(file, 'rb'))
+            with open(file, 'rb') as f:
+                await query.message.reply_document(document=f)
             os.remove(file)
+            sent = True
+
+    if not sent:
+        await query.message.reply_text("لم يتم تحميل الفيديو، تأكد من الرابط.")
 
 # إنشاء التطبيق
 app = ApplicationBuilder().token(TOKEN).build()
@@ -78,4 +94,4 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 app.add_handler(CallbackQueryHandler(download_video))
 
 # تشغيل البوت
-app.run_polling()
+app.run_polling(stop_signals=None)
