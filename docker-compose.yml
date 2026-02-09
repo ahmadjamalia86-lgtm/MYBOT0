@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  mybot:
+    build: .
+    container_name: mybot_telegram
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+    restart: unless-stopped
+    volumes:
+      - ./tmp/bot_downloads:/tmp/bot_downloads
+    networks:
+      - mybot_network
+
+networks:
+  mybot_network:
+    driver: bridge
