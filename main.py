@@ -1,30 +1,24 @@
-import logging
 import asyncio
-from config import TEMP_DIR, OTHER_CONSTANTS
-from yt_dlp import YoutubeDL
+import requests
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+def fetch_data(url):
+    response = requests.get(url)
+    response.raise_for_status()  # Raise an error for bad responses
+    return response.json()
 
-async def download_video(url):
+async def process_data(data):
+    # Simulated data processing
+    await asyncio.sleep(1)  # Simulate I/O operation
+    return {"processed": data}
+
+async def main():
+    url = "http://api.example.com/data"
     try:
-        loop = asyncio.get_running_loop()
-        ydl_opts = {
-            'format': 'best',
-            'outtmpl': f'{TEMP_DIR}/%(title)s.%(ext)s',
-        }
-
-        with YoutubeDL(ydl_opts) as ydl:
-            # Use run_in_executor for blocking operations
-            await loop.run_in_executor(None, ydl.download, [url])
-        logging.info(f'Successfully downloaded video: {url}')
+        data = await fetch_data(url)
+        result = await process_data(data)
+        print(result)
     except Exception as e:
-        logging.error(f'Error downloading video {url}: {e}')
+        print(f"Error occurred: {e}")
 
-async def main(urls):
-    tasks = [download_video(url) for url in urls]
-    await asyncio.gather(*tasks)
-
-if __name__ == '__main__':
-    video_urls = ['http://example.com/video1', 'http://example.com/video2']
-    asyncio.run(main(video_urls))
+if __name__ == "__main__":
+    asyncio.run(main())
